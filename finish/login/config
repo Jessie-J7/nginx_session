@@ -1,0 +1,11 @@
+ngx_addon_name=ngx_http_login_module
+HTTP_MODULES="$HTTP_MODULES ngx_http_login_module"
+echo $ngx_addon_dir
+
+all_cxxs=`find $ngx_addon_dir  -regex '.*\(c\)'`
+echo $all_cxxs
+
+for each in $all_cxxs
+do
+	NGX_ADDON_SRCS="$NGX_ADDON_SRCS $each"
+done
