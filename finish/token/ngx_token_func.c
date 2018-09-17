@@ -9,122 +9,54 @@
 
 ngx_int_t query_string(ngx_http_request_t *r,ngx_http_token_ctx_t *myctx)//解析uri
 {
-	u_char args[300] = {0};
-	u_char requesttime[64] = {0};
-	ngx_memcpy(args,r->args.data,r->args.len);
-	u_char *p = args;
-	u_char match[3][16]={"usrid","data","requesttime"};
-	ngx_uint_t i = 0;
-	ngx_uint_t j = 0;
-	ngx_int_t c = 0;
-	for (; i <= r->args.len; i++)
+	ngx_uint_t			i = 0;
+	u_char				*temp;
+	u_char				*str;
+
+	temp = (u_char*)strtok((char*)r->args.data,"&");
+	str = ngx_strnstr(temp,"=",ngx_strlen(temp));
+	ngx_memcpy(myctx->usrid,str+1,ngx_strlen(str));
+	ngx_log_debug1(NGX_LOG_DEBUG_CORE,r->pool->log,0,"[usrid] %s ",myctx->usrid);
+	while(i++ < 2)
 	{
-		if(ngx_strncmp(p + i, match[c],ngx_strlen(match[c])) == 0
-				&& *(p + i + ngx_strlen(match[c])) == '=')
+		switch(i)
 		{
-			i = i + ngx_strlen(match[c]) + 1;
-			for(j = i;j <= r->args.len;j++)
-			{
-				if(*(p + j) == '&' || c == 2)
-				{
-					switch(c)
-					{
-						case 0:
-							   ngx_memzero(myctx->usrid,j-i+1);
-							   ngx_memcpy(myctx->usrid,p+i,j-i);
-							   break;
-						case 1:
-							   ngx_memzero(myctx->aesData,j-i+1);
-							   ngx_memcpy(myctx->aesData,p+i,j-i);
-							   break;
-						case 2:
-							   ngx_memcpy(requesttime,p+i,r->args.len-i);
-							   myctx->requesttime = (uint64_t)ngx_atosz(requesttime,ngx_strlen(requesttime));
-							   ngx_log_debug1(NGX_LOG_DEBUG_CORE,r->pool->log,0,"myctx->requesttime = %L",myctx->requesttime);
-							   break;
-						default:
-							   return NGX_URI_ERROR;
-					}
-					c++;
-					i = j;
-					break;
-				}
-			}
+			case 1:temp = (u_char*)strtok(NULL,"&");
+				   str = ngx_strnstr(temp,"=",ngx_strlen(temp));
+				   ngx_memcpy(myctx->aesData,str+1,ngx_strlen(str)-1);
+				   ngx_log_debug1(NGX_LOG_DEBUG_CORE,r->pool->log,
+						   0,"[aesData] %s ",myctx->aesData);break;
+			case 2:temp = (u_char*)strtok(NULL," ");
+				   str = ngx_strnstr(temp,"=",ngx_strlen(temp));
+				   myctx->requesttime = (uint64_t)ngx_atosz(str+1,ngx_strlen(str)-1);
+				   ngx_log_debug2(NGX_LOG_DEBUG_CORE,r->pool->log,
+						   0,"[requesttime]%s %L ",str,myctx->requesttime);break;
+			default: return NGX_URI_ERROR;
 		}
 	}
-	if(c == 3)
-		return NGX_URI_RIGHT;
-	return NGX_URI_ERROR;
-}
-//ngx_int_t query_string(ngx_http_request_t *r,ngx_http_token_ctx_t *myctx)//解析uri
-//{
-//	char match[3][12]={"usrid","data","requesttime"};
-//	u_char* str1 = ngx_strnstr(r->args.data,match[1],strlen(match[1]));
-//	u_char* str2 = ngx_strnstr(r->args.data,match[2],strlen(match[2]));
-//	u_char* str3 = ngx_strnstr(r->args.data,match[3],strlen(match[3]));
-//
-//	ngx_int_t slen1 = strlen(match[1])+1;
-//	ngx_int_t slen2 = strlen(match[2])+1;
-//	ngx_int_t slen3 = strlen(match[3])+1;
-//	myctx->usrid = ngx_pcalloc(r->pool,str2-(str1+slen1+2));
-//	ngx_memcpy(myctx->usrid,str1+slen1,str2-(str1+slen1+1));
-//	ngx_log_debug1(NGX_LOG_DEBUG_CORE,r->pool->log,0,"[usrid] %s ",myctx->usrid);
-//	myctx->aesData = ngx_pcalloc(r->pool,str3-(str2+slen2+2));
-//	ngx_memcpy(myctx->aesData,str2+slen2,str3-(str2+slen2+1));
-//	ngx_log_debug1(NGX_LOG_DEBUG_CORE,r->pool->log,0,"[aesData] %s ",myctx->aesData);
-//	u_char *requesttime = ngx_pcalloc(r->pool,r->args.data+r->args.len-(str3+slen3+1));
-//	ngx_memcpy(requesttime,str3+slen3,r->args.data+r->args.len-(str3+slen3));
-//	myctx->requesttime = (uint64_t)ngx_atosz(requesttime,ngx_strlen(requesttime));
-//	ngx_log_debug1(NGX_LOG_DEBUG_CORE,r->pool->log,0,"[requesttime] %L ",myctx->requesttime);
-//	return NGX_URI_RIGHT;
-//}
-ngx_int_t str_n(u_char *str,u_char (*p)[33],ngx_int_t n)
-{
-	ngx_int_t i=0,j=0,k=0;
-	u_char *temp = str;
-	ngx_int_t len = ngx_strlen(str);
-	while(i <= len)             //数据分段
-	{
-		if(str[i] == ' '||str[i] == '\0')
-		{
-			ngx_memzero(p[j],i-k);
-			ngx_memcpy(p[j],temp,i-k);
-			temp = temp + (i-k+1);
-			j++;
-			k = i + 1;
-		}
-		if(j == n)
-			break;
-		i++;
-	}
-	if(j == n)
-		return 0;
-	return -1;
+	return NGX_URI_RIGHT;
 }
 //解密，并对比requesttime，可添加设备号的对比
 ngx_int_t deaes_data(ngx_http_request_t *r,ngx_http_token_ctx_t *myctx)
 {
-	ngx_str_t pencode;   //编码数据
-	ngx_str_t pdecode;   //解码数据
-	u_char c[128];
+	ngx_str_t			pencode;   //编码数据
+	ngx_str_t			pdecode;   //解码数据
+	u_char				c[128];
 	ngx_memzero(c,128);
 
 	pencode.len = ngx_strlen(myctx->aesData);
 	pencode.data = ngx_pcalloc(r->pool,pencode.len + 1);
 	ngx_memcpy(pencode.data,myctx->aesData,pencode.len);
-	//ngx_log_stderr(0,"pencode: %s",pencode.data);
 
 	pdecode.len = ngx_base64_decoded_length(pencode.len);
 	pdecode.data = ngx_pcalloc(r->pool,pdecode.len + 1);
 	ngx_decode_base64(&pdecode,&pencode);     //base64解码
-	//ngx_log_stderr(0,"pdecode: %s",pdecode.data);
 
 	ngx_memcpy(c,pdecode.data,pdecode.len);
 	ngx_int_t clen = pdecode.len;
 	InvCipher_n(c,clen,myctx->aesKey);         //aes算法解密
-	//ngx_log_stderr(0,"c: %s",c);
-	ngx_pfree(r->pool,pencode.data);
-	ngx_pfree(r->pool,pdecode.data);
+
+	ngx_log_error(NGX_LOG_INFO,r->pool->log,0,"c : %s",c);
 	
 	return ngx_time_cmp(r,c,myctx);
 }
@@ -141,28 +73,24 @@ ngx_int_t ngx_time_cmp(ngx_http_request_t *r,u_char *c,ngx_http_token_ctx_t *myc
 		if(i == 1)
 		{
 			ngx_int_t ret = ngx_strcmp(myctx->appDevice,temp);
-			ngx_log_debug2(NGX_LOG_DEBUG_CORE,r->pool->log,0,"Device : %s,ret = %d",temp,ret);
+			ngx_log_debug3(NGX_LOG_DEBUG_CORE,r->pool->log,0,
+					"myctx : %s,Device : %s,ret = %d",myctx->appDevice,temp,ret);
 			if(ret != 0)
 				return NGX_TEST_ERROR;
 		}
 		if(i == 2)
 			break;
 	}
-	ngx_log_debug3(NGX_LOG_DEBUG_CORE,r->pool->log,0,"requesttime:%L,aesTime:%L,ret:%d",myctx->requesttime,aesTime,myctx->requesttime-aesTime);
+	ngx_log_debug3(NGX_LOG_INFO,r->pool->log,0,
+			"requesttime:%L,aesTime:%L,ret:%d",myctx->requesttime,
+			aesTime,myctx->requesttime-aesTime);
 	if(myctx->requesttime-aesTime == 0)  //对比请求时间
 	{
-		uint64_t validTime = 259200000;
 		uint64_t updateTime = 86400000;
-		ngx_log_debug3(NGX_LOG_DEBUG_CORE,r->pool->log,0,"requesttime:%L,myctx->timer:%L,ret:%L",myctx->requesttime,myctx->timer,myctx->requesttime-myctx->timer);
-		if(validTime >= myctx->requesttime - myctx->timer)
-		{
-			if(updateTime >= myctx->requesttime - myctx->timer)
-				return NGX_TIMER_VALID;
-			else
-				return NGX_TIMER_UPDATE;
-		}
+		if(updateTime >= myctx->requesttime - myctx->timer)
+			return NGX_TIMER_VALID;
 		else
-			return NGX_TIMER_EXPIRES;
+			return NGX_TIMER_UPDATE;
 	}	
 	else
 		return NGX_TEST_ERROR;
@@ -192,17 +120,13 @@ ngx_str_t aes_data(ngx_http_request_t *r,ngx_http_token_ctx_t *myctx)
 	pencode.data = ngx_pcalloc(r->pool,pencode.len + 1);
 	ngx_encode_base64(&pencode,&pcur);
 
-	ngx_pfree(r->pool,pcur.data);
-	
 	return pencode;
 }
 ngx_int_t cJSON_to_str(char *json_string,ngx_http_token_ctx_t *myctx)
 {
 	cJSON *root=cJSON_Parse(json_string);
 	if (!root)
-	{
 		return -1;
-	}
 	else
 	{
 		cJSON *item=cJSON_GetObjectItem(root,"body");

@@ -224,14 +224,14 @@ ngx_int_t ngx_http_token_insert(ngx_http_token_conf_t* conf,ngx_http_token_ctx_t
     ngx_http_token_node_t* lr;    
 	//计算要插入的长度
 	size_t size = offsetof(ngx_rbtree_node_t, data)+ offsetof(ngx_http_token_node_t,data) +len;
-	conf->shmsize -= size;
-	ngx_log_debug1(NGX_LOG_DEBUG_CORE,conf->log, 0,"shm_zone_insert = %s",myctx->usrid);
 	//如果共享内存空间不够，释放空间
     node = (ngx_rbtree_node_t*)ngx_slab_alloc_locked(conf->shpool,size);
     while (node == NULL) {//共享内存不足
 		ngx_http_token_expire(conf);
 		node = (ngx_rbtree_node_t*)ngx_slab_alloc_locked(conf->shpool,size);
     }
+	conf->shmsize -= size;
+	ngx_log_debug1(NGX_LOG_DEBUG_CORE,conf->log, 0,"shm_zone_insert = %s",myctx->usrid);
 	node->key = hash;
 
     lr = (ngx_http_token_node_t*)&node->data;
@@ -242,8 +242,8 @@ ngx_int_t ngx_http_token_insert(ngx_http_token_conf_t* conf,ngx_http_token_ctx_t
 	ngx_memcpy(lr->appDevice,myctx->appDevice,ngx_strlen(myctx->appDevice));
 	lr->timer = myctx->timer;
 
-//	ngx_log_debug4(NGX_LOG_DEBUG_CORE,myctx->pool->log,0,
-//			"[shm insert] %s %s %s %L",lr->session,lr->aesKey,lr->appDevice,lr->timer);
+	ngx_log_debug4(NGX_LOG_DEBUG_CORE,conf->log,0,
+			"[shm insert] %s %s %s %L",lr->session,lr->aesKey,lr->appDevice,lr->timer);
 	//插入红黑树，插入队首
     ngx_rbtree_insert(&conf->sh->rbtree, node);
     ngx_queue_insert_head(&conf->sh->queue, &lr->queue);

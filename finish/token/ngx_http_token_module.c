@@ -60,6 +60,7 @@ char * ngx_http_token(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 
 ngx_int_t ngx_http_token_handler(ngx_http_request_t *r)
 {
+	ngx_str_t response;
 	ngx_http_token_ctx_t * ctx = ngx_http_get_module_ctx(r,ngx_http_token_module);
 	if(ctx == NULL)
 	{
@@ -70,7 +71,6 @@ ngx_int_t ngx_http_token_handler(ngx_http_request_t *r)
 	}
 	ngx_str_t zName = ngx_string("test");
 	ngx_shm_zone_t *shm_zone = ngx_http_get_shm_zone(&zName);
-
 	ngx_http_token_conf_t * conf = shm_zone->data;
 	ctx->shm_zone = shm_zone;
 
@@ -78,7 +78,7 @@ ngx_int_t ngx_http_token_handler(ngx_http_request_t *r)
 	if(ret == -1)
 		return NGX_HTTP_NOT_FOUND;
 
-	ngx_log_debug3(NGX_LOG_DEBUG_CORE,r->pool->log,
+	ngx_log_error(NGX_LOG_INFO,r->pool->log,
 			0,"[request uri] %s %s %L",ctx->usrid,ctx->aesData,ctx->requesttime);
 
 	size_t len = ngx_strlen(ctx->usrid);
@@ -88,8 +88,14 @@ ngx_int_t ngx_http_token_handler(ngx_http_request_t *r)
 	ngx_int_t rc = ngx_http_token_lookup(conf,hash,ctx);
 	ngx_shmtx_unlock(&conf->shpool->mutex);
 
+	uint64_t validTime = 259200000;
 	if(rc == NGX_SHM_HIT){
-		ret = deaes_data(r,ctx);
+		if(validTime >= ctx->requesttime - ctx->timer)
+			ret = deaes_data(r,ctx);
+		else
+			ret = NGX_TIMER_EXPIRES;
+		ngx_log_error(NGX_LOG_INFO,r->pool->log,0,
+			"[token message des]%d %s %s %s %L",ret,ctx->session,ctx->aesKey,ctx->appDevice,ctx->timer);
 		if(ret == NGX_TIMER_VALID || ret == NGX_TIMER_UPDATE){
 			ngx_shmtx_lock(&conf->shpool->mutex);
 			ngx_int_t rc = ngx_http_token_update(conf,hash,ctx);
@@ -103,12 +109,14 @@ ngx_int_t ngx_http_token_handler(ngx_http_request_t *r)
 			if(ret == NGX_TIMER_VALID)
 				ngx_http_upstream_realServer_handler(r);
 		}
-		else{
-			ngx_str_t response;
-			if(ret == NGX_TIMER_EXPIRES)
-				ngx_str_set(&response,"expires");
-			if(ret == NGX_TEST_ERROR)
-				ngx_str_set(&response,"failed");
+		else if(ret == NGX_TIMER_EXPIRES) 
+		{	
+			ngx_str_set(&response,"expires");
+			return ngx_http_sendmsg_client(r,response);
+		}
+		else 
+		{	
+			ngx_str_set(&response,"failed");
 			return ngx_http_sendmsg_client(r,response);
 		}
 	}
@@ -185,11 +193,11 @@ ngx_int_t ngx_http_upstream_tokenServer_toGet_handler(ngx_http_request_t *r)
 	psr->handler = token_subrequest_post_get_handler;
 	psr->data = myctx;
 
-	ngx_str_t sub_prefix = ngx_string("/rest/getsession");
+	ngx_str_t sub_prefix = ngx_string("/rest/updatesession");
 	ngx_str_t sub_args;
-	sub_args.len = 6+ngx_strlen(myctx->usrid);
-	sub_args.data = ngx_pcalloc(r->pool,sub_args.len + 1);
-	sprintf((char*)sub_args.data,"usrid=%s",myctx->usrid);
+	sub_args.len = 13+ngx_strlen(myctx->usrid)+13;
+	sub_args.data = ngx_pcalloc(r->pool,sub_args.len+1);
+	sprintf((char*)sub_args.data,"usrid=%s&timer=%ld",myctx->usrid,myctx->requesttime);
 
 	ngx_http_request_t *sr;
 	ngx_int_t rc = ngx_http_subrequest(r,&sub_prefix,&sub_args,&sr,psr,NGX_HTTP_SUBREQUEST_IN_MEMORY);
@@ -218,15 +226,20 @@ ngx_int_t token_subrequest_post_get_handler(ngx_http_request_t *r,void *data,ngx
 	ngx_memcpy(item,pRecvBuf->pos,r->upstream->length);
 	ngx_log_debug1(NGX_LOG_DEBUG_CORE,r->pool->log,
 			0,"getsession response item = %s",item);
-	myctx->usrid = (u_char *)strtok((char*)item," ");
+	
+	u_char *temp;
+	temp = (u_char *)strtok((char*)item," ");
 	while(i++ < 4)
 	{
 		switch(i)
 		{
-			case 1:myctx->session = (u_char*)strtok(NULL," ");
-			case 2:myctx->key = (u_char*)strtok(NULL," ");
-			case 3:myctx->appDevice = (u_char*)strtok(NULL," ");
-			case 4:u_char* temp = (u_char*)strtok(NULL," ");
+			case 1:temp = (u_char*)strtok(NULL," ");
+				   ngx_memcpy(myctx->session,temp,ngx_strlen(temp));break;
+			case 2:temp = (u_char*)strtok(NULL," ");
+				   ngx_memcpy(myctx->aesKey,temp,ngx_strlen(temp));break;
+			case 3:temp = (u_char*)strtok(NULL," ");
+				   ngx_memcpy(myctx->appDevice,temp,ngx_strlen(temp));break;
+			case 4:temp = (u_char*)strtok(NULL," ");break;
 			default:ngx_log_debug0(NGX_LOG_DEBUG_CORE,r->pool->log,0,"SPILT_ERROR");
 		}
 	}
@@ -240,6 +253,7 @@ ngx_int_t token_subrequest_post_get_handler(ngx_http_request_t *r,void *data,ngx
 
 ngx_int_t token_post_get_handler(ngx_http_request_t *r)
 {
+	ngx_str_t response;
 	if(r->headers_out.status != NGX_HTTP_OK)
 	{
 		ngx_http_finalize_request(r,r->headers_out.status);
@@ -249,7 +263,8 @@ ngx_int_t token_post_get_handler(ngx_http_request_t *r)
 	ngx_http_token_ctx_t * myctx = ngx_http_get_module_ctx(r,ngx_http_token_module);
 	ngx_http_token_conf_t		*conf = myctx->shm_zone->data;
 	ngx_int_t ret = deaes_data(r,myctx);
-	ngx_log_debug1(NGX_LOG_DEBUG_CORE,r->pool->log,0,"des ret: %d",ret);
+	ngx_log_error(NGX_LOG_INFO,r->pool->log,0,
+		"[token message des]%d %s %s %s %L",ret,myctx->session,myctx->aesKey,myctx->appDevice,myctx->timer);
 	if(ret == NGX_TIMER_VALID || ret == NGX_TIMER_UPDATE)
 	{
 		ngx_shmtx_lock(&conf->shpool->mutex);
@@ -260,13 +275,14 @@ ngx_int_t token_post_get_handler(ngx_http_request_t *r)
 		ngx_http_upstream_realServer_handler(r);
 		return NGX_OK;
 	}
+	else if(ret == NGX_TIMER_EXPIRES)
+	{	
+		ngx_str_set(&response,"expires");
+		return ngx_http_sendmsg_client(r,response);
+	}
 	else
-	{
-		ngx_str_t response;
-		if(ret == NGX_TIMER_EXPIRES)
-			ngx_str_set(&response,"expires");
-		if(ret == NGX_TEST_ERROR)
-			ngx_str_set(&response,"failed");
+	{	
+		ngx_str_set(&response,"failed");
 		return ngx_http_sendmsg_client(r,response);
 	}
 }
@@ -322,7 +338,7 @@ ngx_int_t token_post_update_handler(ngx_http_request_t *r)
 
 ngx_int_t ngx_http_sendmsg_client(ngx_http_request_t *r,ngx_str_t response)
 {
-	ngx_log_debug1(NGX_LOG_DEBUG_CORE,r->pool->log,0,"%s",response.data);
+	ngx_log_error(NGX_LOG_INFO,r->pool->log,0,"[response] %s",response.data);
 	ngx_str_t type = ngx_string("text/plain; charset=GBK");
 
 	r->headers_out.status = NGX_HTTP_OK;

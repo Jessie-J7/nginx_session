@@ -39,7 +39,7 @@ typedef struct {
 typedef struct{
 	/* url args */
 	u_char				usrid[33];
-	u_char				aesData[128];
+	u_char				aesData[256];
 	uint64_t			requesttime;	
 	/* token msg */
 	u_char				session[33];
